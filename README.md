@@ -1,8 +1,10 @@
-# AK-47 · Fire Serpent — local mirror
+# AK-47 · Fire Serpent — live copy
 
-This directory mirrors the publicly served static site at <https://cs2-promo.serhiidesign.com/> for local review. It includes the original HTML, CSS, JavaScript, video sequence, fonts, preloader artwork, and sticker previews.
+**Live site:** https://vladimirgnatovsky.github.io/cs2-promo-clutch-mirror/
 
-The original website credits its design to Clutch and identifies the game assets as © Valve. This mirror does not grant a license to redistribute the site or its assets. Get permission from the relevant rights holders before making this copy public.
+This repository contains a static copy of the cinematic CS2 showcase, including its HTML, CSS, JavaScript, video sequence, fonts, preloader artwork, and sticker previews.
+
+The design is credited to Clutch, and the game assets are identified as © Valve.
 
 ## Preview locally
 
