@@ -1,0 +1,732 @@
+/* Fire Serpent — station sequence engine
+   Typography, palette and rail language carried over from the previous build.
+   No backdrop-filter and no filter: drop-shadow anywhere: both tanked FPS in
+   this project's history. Everything that moves is opacity or transform. */
+
+@font-face{font-family:Antonio;src:url('../assets/cinematic/fonts/antonio-bold.ttf') format('truetype');font-weight:700;font-display:swap}
+@font-face{font-family:Archivo;src:url('../assets/cinematic/fonts/archivo-regular.ttf') format('truetype');font-weight:400;font-display:swap}
+
+:root{
+  --ink:#10110f;
+  --paper:#ecebe3;
+  --accent:#e8753f;
+  --muted:#b1b2a6;
+  --pad:clamp(24px,4vw,72px);
+  --display:Antonio,'Arial Narrow',sans-serif;
+  --body:Archivo,Arial,sans-serif;
+  --in:.3s;      /* station gate opening; the lines below carry the entrance */
+  --out:.35s;    /* overlay exit when a transition starts */
+  --copy-ease:cubic-bezier(.2,.75,.3,1);
+}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;overflow:hidden}
+html{background:var(--ink)}
+body{
+  margin:0;color:var(--paper);background:var(--ink);
+  font-family:var(--body);font-size:16px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;font-feature-settings:'kern' 1;text-rendering:optimizeLegibility;
+  overscroll-behavior:none;touch-action:none;
+}
+button,a{-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;touch-action:manipulation}
+a{color:inherit;text-decoration:none}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:7px}
+button:hover,a:hover{color:var(--accent)}
+button svg,a svg{flex-shrink:0}
+svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+h1,h2,p{margin:0}
+h2{font:700 clamp(52px,6.5vw,100px)/1.02 var(--display);letter-spacing:.015em;text-wrap:balance}
+p{max-width:55ch;text-wrap:pretty}
+/* WebKit's `pretty` rebalances every line, so a short hand-broken paragraph in a
+   shrink-to-fit box ("Some legends are found.<br>This one rises.") gains a
+   third line and grows into the copy above it. Chrome only touches the last
+   lines, so plain wrapping is what it already renders for these. */
+.hero-caption p,.legacy-copy p,.credit{text-wrap:wrap}
+::selection{background:var(--accent);color:var(--ink)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.skip{position:fixed;z-index:100;left:20px;top:20px;padding:12px;background:var(--paper);color:var(--ink);transform:translateY(-160%)}
+.skip:focus{transform:none}
+
+/* ---------- video stage ------------------------------------------------- */
+/* Every clip in the manifest becomes one <video class="plate">. Exactly one
+   plate is `.is-live` (z 2, opaque). The clip we are about to reveal is
+   `.is-incoming`: fully opaque but at z 1, so it is decoding and presenting
+   frames underneath the live plate. When its first frame has actually been
+   presented (requestVideoFrameCallback) the classes swap. That swap is a
+   z-index change on already-painted layers, so there is never a moment with
+   no video on screen. */
+.stage{position:fixed;inset:0;overflow:hidden;pointer-events:none;background:#141611;isolation:isolate;z-index:0}
+.plate{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;object-position:50% 50%;
+  opacity:0;z-index:0;pointer-events:none;background:#141611;
+}
+.plate.is-incoming{opacity:1;z-index:1}
+.plate.is-live{opacity:1;z-index:2}
+/* Only used by the direct-jump crossfade and by reduced motion. */
+.plate.is-fading{transition:opacity var(--fade,500ms) linear;opacity:0}
+.stage-shade{position:absolute;inset:0;z-index:3;background:
+  linear-gradient(180deg,rgba(8,10,8,.62),transparent 28%,rgba(8,10,8,.1) 60%,rgba(8,10,8,.78)),
+  linear-gradient(90deg,rgba(8,10,8,.22),transparent 50%,rgba(8,10,8,.32))}
+.stage-edge{position:absolute;inset:0;z-index:3;box-shadow:inset 0 0 130px 30px rgba(0,0,0,.35)}
+
+/* The page is black until the first loop has a painted frame. */
+body:not(.is-ready) .station,
+body:not(.is-ready) .sequence-controls,
+body:not(.is-ready) .chapter-rail{opacity:0}
+
+/* ---------- chrome ------------------------------------------------------ */
+.masthead{position:fixed;inset:0 0 auto;z-index:20;padding:26px var(--pad);display:flex;align-items:center;justify-content:space-between;gap:24px;pointer-events:none}
+.masthead>*{pointer-events:auto}
+.brand{display:flex;gap:9px;align-items:center;font-size:22px;font-weight:700;letter-spacing:-.02em}
+.brand svg{height:30px;width:25px;fill:var(--accent);stroke:none}
+.brand span{font-size:10px;align-self:flex-start;margin:4px 0 0 -5px}
+.masthead-caption,.menu-toggle,.hero-top,.hero-caption>span,.hero-edition,.scroll-cue,.station-note,.spec-note,
+.sequence-controls,.chapter-rail,.signature-heading p,.legacy-copy>span,.primary-action,.replay,.menu-top,.credit,.sticker-caption
+{font-size:11px;letter-spacing:.08em;line-height:1.45}
+.masthead-caption{color:var(--muted);position:absolute;left:50%;transform:translateX(-50%)}
+.menu-toggle{display:flex;align-items:center;gap:19px;min-height:44px}
+.menu-toggle svg{width:23px}
+
+/* ---------- stations (copy overlays) ------------------------------------ */
+main{position:fixed;inset:0;z-index:5;pointer-events:none}
+.station{
+  position:fixed;inset:0;
+  opacity:0;visibility:hidden;
+  transform:translate3d(0,-8px,0);
+  transition:opacity var(--out) cubic-bezier(.4,0,.7,.2),transform var(--out) ease-in,visibility 0s linear var(--out);
+  will-change:opacity,transform;
+}
+.station.is-active{
+  opacity:1;visibility:visible;transform:none;
+  transition:opacity var(--in) ease-out,transform 0s,visibility 0s;
+}
+/* Copy lines (tagged by js/sequence.js with --i in reading order). JS sets
+   --copy-in on the section from the transition's remaining time, so the last
+   line settles as the transition's last frame lands. `translate` (not
+   `transform`) so lines that already centre themselves with a transform keep
+   it. The blur runs on a handful of text nodes, only while entering, and is
+   removed outright at rest. On exit the section fades as a whole and the
+   lines snap back to their start state only after it is invisible. */
+.copy-line{
+  opacity:0;translate:0 18px;filter:blur(6px);
+  transition:opacity 0s linear var(--out),translate 0s linear var(--out),filter 0s linear var(--out);
+}
+.station.is-active .copy-line{
+  opacity:1;translate:0 0;filter:none;
+  transition:
+    opacity calc(var(--copy-in,900ms) * .8) ease-out calc(var(--i,0) * var(--copy-stagger,80ms)),
+    translate var(--copy-in,900ms) var(--copy-ease) calc(var(--i,0) * var(--copy-stagger,80ms)),
+    filter calc(var(--copy-in,900ms) * .7) ease-out calc(var(--i,0) * var(--copy-stagger,80ms));
+}
+.station-inner{position:absolute;inset:0}
+/* A loop can hand us a very bright frame (a lit range, a white ceiling) under
+   copy that sits away from the stage gradients. text-shadow is a cheap, single
+   composite; filter: drop-shadow on this many nodes is what tanks FPS. */
+.station h1,.station h2,.station p,.station dl,.station .station-note,
+.station .spec-note,.station .sticker-stage,.station .sticker-caption,
+.station .hero-top,.station .hero-edition,.station .scroll-cue{text-shadow:0 1px 16px rgba(6,9,5,.72)}
+.station a,.station button{pointer-events:auto}
+.station:not(.is-active) a,.station:not(.is-active) button{pointer-events:none}
+
+/* ---------- text zones --------------------------------------------------
+   The band names come from the director's shotlist (docs/shotlist.html, the
+   per-scene "Текст-зона" cell). Those are the bands the footage keeps dark and
+   event-free, so every copy block must live inside its station's band and the
+   rest of the frame must stay clear for the weapon.
+
+     top-bottom   upper band (heading) + lower band, centre left to the subject
+     right-third  the rightmost third only
+     left-third   the leftmost third only
+     corners      upper band + the two bottom corners
+
+   Below 600px all of them collapse to one left column: a cover-cropped 16:9
+   clip on a portrait phone has no left or right third left to speak of. */
+
+/* Never lower than the caption's top (11vh + ~92px of caption) plus a hair:
+   on short desktops 22vh alone lands the kicker on the caption's first line. */
+.hero-top{position:absolute;bottom:max(22vh,calc(11vh + 96px));left:var(--pad);right:var(--pad);display:flex;align-items:center;justify-content:space-between}
+.hero-top>span:first-child{font-size:15px}
+.rarity{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.rarity i,.rarity-dot{display:inline-block;background:var(--accent);width:5px;height:5px;border-radius:50%}
+/* Capped in vh as well as vw so the title cannot leave the upper 22% band. */
+/* Poster scale, and deliberately in the middle of the frame rather than in the
+   upper 22% band. L0 is liquid only — no weapon to occlude — so that band is a
+   constraint for T1, not for this station, and the copy has faded out by the
+   time T1 plays. The box is max-content so it can never sit under the masthead
+   or the footer strip. */
+.hero-title{position:absolute;left:50%;transform:translateX(-50%);top:25vh;width:max-content;max-width:92vw;white-space:nowrap;text-align:center;font-family:var(--display);font-weight:700;font-size:min(15.9vw,30vh);line-height:.96;letter-spacing:.01em;color:var(--accent)}
+.hero-caption{position:absolute;bottom:11vh;left:var(--pad)}
+.hero-caption p{font-size:clamp(18px,1.65vw,26px);line-height:1.35}
+.hero-line{display:block}
+.hero-caption>span{display:block;margin-top:18px;color:var(--muted)}
+.hero-edition{position:absolute;right:var(--pad);bottom:10.5vh;display:grid;gap:8px;text-align:right;color:var(--muted)}
+.hero-edition span:first-child{color:var(--paper)}
+.scroll-cue{position:absolute;bottom:10.5vh;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:14px;padding:0}
+.scroll-cue svg{height:34px;width:25px;animation:cue 2.6s ease-in-out infinite}
+@keyframes cue{0%,72%,100%{transform:translateY(0);opacity:.75}86%{transform:translateY(6px);opacity:1}}
+
+.story-copy{position:absolute;top:23vh;width:24vw;max-width:400px}
+[data-zone=right-third] .story-copy{right:8vw;left:auto}
+[data-zone=left-third] .story-copy{left:6vw;right:auto;width:26vw}
+.story-copy p{font-size:clamp(15px,1.16vw,19px);line-height:1.55;color:#d3d1c5;margin-top:30px}
+.story-copy p+p{color:var(--muted);margin-top:18px}
+.text-link{display:inline-flex;align-items:center;gap:18px;font-size:13px;margin-top:30px;border-bottom:1px solid rgba(236,235,227,.35);padding-bottom:7px}
+.text-link span{font-size:21px}
+/* The caption used to sit bottom-left on every station. On a right-third
+   station that put copy in the third the shotlist wants empty, so it now
+   follows its own column. */
+.station-note{position:absolute;left:var(--pad);bottom:14vh;display:grid;gap:8px}
+[data-zone=right-third] .station-note{left:auto;right:8vw;width:24vw;max-width:400px}
+[data-zone=left-third] .station-note{right:auto;left:6vw;width:26vw;max-width:400px}
+.station-note>span:last-child{color:var(--muted)}
+.station-note b{font-weight:400}
+#origin .station-note span{color:var(--muted)}
+
+.artwork-copy{top:18vh}
+.artwork-copy h2{font-size:clamp(50px,5.4vw,83px)}
+.detail-selector{display:flex;gap:24px;margin-top:28px}
+.detail-selector button{min-height:44px;padding:6px 0;color:var(--muted);font-size:13px;border-bottom:1px solid transparent}
+.detail-selector button.selected{color:var(--paper);border-color:var(--accent)}
+
+#specification .story-copy{top:18vh}
+#specification h2{font-size:clamp(52px,6vw,92px)}
+.specs{margin:24px 0 0;width:100%;font-size:14px}
+.specs>div{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid rgba(236,235,227,.17)}
+.specs dt{color:var(--muted)}
+.specs dd{margin:0;display:flex;gap:7px;align-items:center;font-variant-numeric:tabular-nums}
+.spec-note{position:absolute;left:6vw;right:auto;bottom:13vh;width:26vw;max-width:400px;color:var(--muted);text-align:left}
+
+/* Shotlist scene 5: copy in the upper and lower quarters, the middle of the
+   frame reserved for the receiver so the site can lay stickers on it. */
+.signature-heading{position:absolute;top:8vh;left:var(--pad);right:var(--pad);text-align:center}
+.signature-heading h2{font-size:min(5.4vw,8.6vh)}
+.signature-heading p{font-size:14px;margin:16px auto 0;color:var(--muted)}
+/* Bottom-LEFT third only. In the first-person Signature key the hands occupy
+   bottom-centre and bottom-right, so the dock stacks 2x2 in the one corner
+   that stays quiet instead of spanning the foot of the frame. */
+.sticker-dock{position:absolute;bottom:10.5vh;left:var(--pad);right:auto;transform:none;text-align:left;width:min(24vw,200px)}
+/* The composite itself: parked over the receiver, at the anchor the manifest
+   gives for this station, so re-shooting the clip stays a manifest-only edit. */
+.sticker-stage{position:absolute;left:var(--anchor-x,48%);top:var(--anchor-y,53%);transform:translate(-50%,-50%);display:grid;justify-items:center;gap:9px;color:var(--muted);font-size:10px;letter-spacing:.14em}
+/* Laid onto the receiver as seen in the first-person Signature key (KP4): the
+   plate is turned away from camera and canted, so the preview gets the same
+   yaw and roll rather than sitting flat on the screen. The dashed ghost frame
+   is a child, so it inherits the whole 3D composition. */
+.sticker-slot{position:relative;display:grid;place-items:center;width:104px;height:104px;border:1px solid rgba(232,117,63,.55);background:rgba(8,11,7,.62);transform:perspective(600px) rotateY(-26deg) rotate(-17deg);transform-origin:center}
+.sticker-slot::before{content:'';position:absolute;inset:0;border:1px dashed rgba(236,235,227,.16);transform:translate(6px,6px)}
+.sticker-slot img{width:74px;height:74px;object-fit:contain;opacity:0;transition:opacity .25s ease}
+.sticker-slot img.on{opacity:1}
+.sticker-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;width:100%}
+.sticker-options button{display:flex;align-items:center;flex-direction:column;gap:5px;width:auto;padding:4px 0 9px;border-bottom:1px solid transparent;color:var(--muted);font-size:10px;white-space:nowrap;transition:color .2s,transform .2s}
+.sticker-options button:hover{transform:translateY(-4px);color:var(--paper)}
+.sticker-options button.selected{color:var(--paper);border-color:var(--accent)}
+.sticker-options img,.sticker-options svg{width:44px;height:44px;object-fit:contain}
+.sticker-options svg{width:34px;height:44px}
+.sticker-caption{font-size:10px;color:var(--muted);margin-top:12px;letter-spacing:.02em;white-space:normal;max-width:100%}
+
+/* ---------- zone: top-right (Signature, shotlist edition 4) -------------
+   The first-person hands fill the rest of the frame, so every word lives in
+   the block right of 66% width and above 33% height. The station-inner becomes
+   a right-aligned column so the heading, subhead and dock stack themselves —
+   no hand-tuned offsets to drift when the copy rewraps. The composite is the
+   one exception: it stays absolute, on the receiver, at the manifest anchor. */
+[data-zone=top-right] .station-inner{display:flex;flex-direction:column;align-items:flex-end;gap:14px;padding:8vh var(--pad) 0 0}
+[data-zone=top-right] .signature-heading,
+[data-zone=top-right] .sticker-dock{position:static;inset:auto;transform:none;width:min(30vw,430px);text-align:right}
+[data-zone=top-right] .signature-heading h2{font-size:min(2.9vw,4.6vh);line-height:1.05}
+[data-zone=top-right] .signature-heading p{font-size:11px;margin:9px 0 0 auto;max-width:100%}
+[data-zone=top-right] .sticker-options{display:flex;justify-content:flex-end;gap:14px;width:100%}
+[data-zone=top-right] .sticker-options button{width:82px;font-size:9px;white-space:nowrap}
+[data-zone=top-right] .sticker-options img,[data-zone=top-right] .sticker-options svg{width:34px;height:34px}
+[data-zone=top-right] .sticker-options svg{width:26px;height:34px}
+[data-zone=top-right] .sticker-caption{margin-top:9px;text-align:right;white-space:nowrap}
+
+/* ---------- zone: recoil (station 6, L4s shooting loop) ------------------
+   First-person range, KP4-v2: five silhouettes span the whole width in a band
+   from ~18% to ~37% of the frame height (outer pair near the walls), and each
+   carries a bracket. Below that band the rifle fills the centre and right in
+   both poses; the one quiet area is the left floor, so the copy starts under
+   the band there. The card parks bottom-right over the stock and grip hand,
+   clear of every target and of the painted receiver. */
+[data-zone=recoil] .recoil-copy{left:5vw;right:auto;top:39vh;width:min(19vw,300px)}
+#recoil .recoil-copy h2{font-size:clamp(40px,4.3vw,70px)}
+.recoil-copy p{margin-top:22px}
+.recoil-specs{margin-top:20px;font-size:12px}
+.recoil-specs>div{padding:8px 0}
+.recoil-specs dd{text-align:right}
+[data-zone=recoil] .station-note{left:5vw;bottom:12vh}
+[data-zone=recoil] .recoil-copy p{margin-top:14px}
+.recoil-specs{margin-top:14px}
+
+/* The HUD. Thin rules, micro labels, the page's own orange for anything live.
+   JS writes only transform / opacity / stroke-dashoffset (and --rs, --live). */
+.hud{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .4s ease-out}
+.hud.is-built{opacity:1}
+.hud-reticle,.hud-aim,.hud-card,.hud-tag,.hud-head,.hud-meta,.hud-pull-label{font-size:9px;letter-spacing:.14em;line-height:1.3;text-transform:uppercase;font-variant-numeric:tabular-nums}
+.hud-reticle{
+  --rs:110px;position:absolute;left:0;top:0;width:0;height:0;opacity:0;
+  color:var(--paper);will-change:transform,opacity;transform-origin:0 0;
+}
+.hud-reticle svg{position:absolute;width:var(--rs);height:var(--rs);left:calc(var(--rs) / -2);top:calc(var(--rs) / -2);overflow:visible;stroke-width:1.1;vector-effect:non-scaling-stroke}
+.hud-reticle svg path{vector-effect:non-scaling-stroke}
+.hud-pip{stroke:var(--accent)}
+.hud-reticle[data-state=acquiring] .hud-brackets{stroke-dasharray:6 4}
+/* Tags sit above their bracket, flush left. */
+.hud-tag{position:absolute;left:calc(var(--rs) / -2);bottom:calc(var(--rs) / 2 + 7px);display:grid;gap:3px;white-space:nowrap;color:var(--muted);text-shadow:0 1px 10px rgba(6,9,5,.9)}
+.hud-tag b{font-weight:400;color:var(--paper)}
+.hud-reticle[data-state=locked] .hud-tag b{color:var(--accent)}
+/* Nothing on the targets at rest. After FIRE: scan brackets sweep the five
+   (dashed, faint), then the lock reticle spins down onto TGT 02. --hit (0..1)
+   flips it from paper to hot orange-red on every hit. JS drives opacity and
+   transforms; the svg rotates around its own centre. */
+.hud-targets{position:absolute;inset:0}
+.hud-reticle--scan .hud-brackets{stroke-dasharray:3 3}
+.hud-reticle--scan .hud-tag b{color:var(--muted)}
+.hud-reticle--lock{--hit:0;color:color-mix(in srgb,#ff4a26 calc(var(--hit) * 100%),var(--paper))}
+.hud-reticle--lock svg{transform-origin:50% 50%;will-change:transform}
+.hud-reticle--lock .hud-brackets,.hud-reticle--lock svg path{stroke:currentColor}
+.hud-reticle--lock[data-state=locking] svg path:first-child,.hud-reticle--lock[data-state=released] svg path:first-child{stroke-dasharray:6 4}
+.hud-lock-ring{fill:none;stroke:currentColor;stroke-width:1;stroke-dasharray:18 7;opacity:.55}
+.hud-reticle--lock[data-state=locked] .hud-lock-ring{stroke-dasharray:none;opacity:calc(.3 + var(--hit) * .7)}
+.hud-lock-ticks{stroke:var(--accent)}
+.hud-reticle--lock .hud-pip{stroke:var(--accent)}
+.hud-reticle--lock .hud-tag b{color:currentColor}
+.hud-reticle--lock[data-state=locked] .hud-tag span{color:var(--accent)}
+.hud-dmg{position:absolute;left:calc(var(--rs) / 2 + 8px);top:calc(var(--rs) / -2);font:700 15px/1 var(--display);letter-spacing:.04em;font-style:normal;white-space:pre;color:#ff5a36;opacity:0;text-shadow:0 1px 10px rgba(6,9,5,.9);will-change:transform,opacity}
+/* Where the rifle points: measured sight line, aim dot, lead to the lock. */
+.hud-lines{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible}
+.hud-lines line{vector-effect:non-scaling-stroke;opacity:0}
+.hud-bore{stroke:rgba(236,235,227,.5);stroke-width:1;stroke-dasharray:2 4}
+.hud-lead{stroke:var(--accent);stroke-width:1;stroke-dasharray:1 3}
+.hud-aim{position:absolute;left:0;top:0;width:0;height:0;opacity:0;color:var(--paper);will-change:transform,opacity}
+.hud-aim svg{position:absolute;width:22px;height:22px;left:-11px;top:-11px;overflow:visible}
+.hud-aim svg *{vector-effect:non-scaling-stroke}
+.hud-aim-ring{stroke:var(--paper);stroke-width:1}
+.hud-aim-dot{fill:var(--accent);stroke:none}
+.hud-aim-kick{stroke:var(--accent);stroke-width:1.2;opacity:0;transform-box:fill-box;transform-origin:center}
+.hud-aim span{position:absolute;left:9px;top:-19px;color:var(--muted);text-shadow:0 1px 10px rgba(6,9,5,.9)}
+
+.hud-card{
+  position:absolute;top:auto;bottom:calc(86px + 3vh);right:calc(var(--pad) + 36px);
+  width:min(17vw,27vh,270px);min-width:190px;padding:12px 12px 10px;
+  color:var(--muted);background:rgba(8,10,8,.34);
+  border:1px solid rgba(236,235,227,.14);
+}
+.hud-card::before,.hud-card::after{content:'';position:absolute;width:9px;height:9px;border:solid var(--accent)}
+.hud-card::before{left:-1px;top:-1px;border-width:1px 0 0 1px}
+.hud-card::after{right:-1px;bottom:-1px;border-width:0 1px 1px 0}
+.hud-head{display:flex;justify-content:space-between;padding-bottom:8px;border-bottom:1px solid rgba(236,235,227,.14)}
+.hud-head span:first-child{color:var(--paper)}
+.hud-plot-wrap{position:relative;display:flex;gap:8px;margin-top:10px}
+/* PULL: how far the hand drags the mouse DOWN to hold the climb, so the bar
+   fills downward and a chevron rides its leading edge. It sits in the card's
+   own padding (same inset as the header), label reading top to bottom, the
+   mouse path it implies drawn thin beside it. JS drives it every frame. */
+.hud-pull{flex:0 0 auto;display:grid;grid-template-columns:auto 3px 10px;grid-template-rows:auto 1fr;column-gap:6px}
+.hud-pull-label{grid-area:1/1;writing-mode:vertical-rl;font-style:normal;letter-spacing:.2em;font-size:8px;color:var(--muted);white-space:nowrap}
+.hud-pull-label b{font-weight:400;color:var(--paper);display:inline-block;min-block-size:3.4em}
+.hud-pull-dir{grid-area:2/1;justify-self:center;width:8px;height:12px;margin-top:5px;stroke:var(--accent);stroke-width:1.2}
+.hud-pull-track{grid-area:1/2/3/3;position:relative;background:rgba(236,235,227,.12)}
+.hud-pull-track i{position:absolute;inset:0;background:var(--accent);transform:scaleY(0);transform-origin:top;will-change:transform}
+.hud-pull-head{position:absolute;inset:0;opacity:0;will-change:transform}
+.hud-pull-head::after{content:'';position:absolute;left:50%;top:0;width:6px;height:6px;border:solid var(--accent);border-width:0 1.2px 1.2px 0;transform:translate(-50%,-80%) rotate(45deg)}
+.hud-pull-trace{grid-area:1/3/3/4;width:10px;height:100%;overflow:visible}
+.hud-pull-trace polyline{fill:none;stroke:var(--accent);stroke-width:1;stroke-opacity:.7;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.hud-plot{display:block;flex:1;min-width:0;width:auto;height:auto;aspect-ratio:160/150;overflow:visible;stroke-width:1}
+.hud-plot *{vector-effect:non-scaling-stroke}
+/* The live climb is drawn with a user-unit dash, so it must scale with the plot. */
+.hud-plot .plot-live{vector-effect:none}
+.plot-axis{stroke:rgba(236,235,227,.3)}
+.plot-grid{stroke:rgba(236,235,227,.07);stroke-dasharray:2 4}
+.plot-cone{stroke:rgba(236,235,227,.35);stroke-dasharray:1.5 2}
+.plot-ghost{fill:rgba(236,235,227,.22);stroke:none}
+.plot-ghost-line{stroke:rgba(236,235,227,.1);stroke-dasharray:1 3}
+.plot-live{stroke:var(--accent);stroke-width:1.4;opacity:var(--live,1)}
+/* Idle snake along the ghost pattern (JS moves the dashes) and a breathing
+   origin ring (CSS). One halo circle stands in for a glow; no filters. */
+.hud-plot .plot-snake polyline{fill:none;stroke:var(--accent);stroke-linecap:round;stroke-linejoin:round;vector-effect:none}
+.plot-snake-head{fill:#ffd7bf;stroke:none;opacity:0}
+.plot-snake-halo{fill:var(--accent);stroke:none;opacity:0}
+.plot-pulse{stroke:var(--accent);stroke-width:1;opacity:0;transform-box:fill-box;transform-origin:center;animation:plot-pulse 2.4s cubic-bezier(.2,.6,.3,1) infinite}
+#recoil:not(.is-active) .plot-pulse{animation-play-state:paused}
+@keyframes plot-pulse{0%{transform:scale(.7);opacity:.75}70%,100%{transform:scale(2.6);opacity:0}}
+.plot-hit{opacity:0}
+.plot-hit circle{fill:var(--accent);stroke:none;transform-origin:center;transform:scale(0)}
+.plot-hit text{fill:var(--muted);stroke:none;font:7px var(--body);letter-spacing:.06em;opacity:0}
+.plot-hit.is-last text{opacity:1;fill:var(--paper)}
+.hud-read{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(236,235,227,.14)}
+.hud-ammo{display:flex;align-items:baseline;gap:3px;color:var(--muted)}
+.hud-ammo b{font:700 34px/0.9 var(--display);color:var(--paper);letter-spacing:.01em;font-variant-numeric:tabular-nums}
+.hud-meta{display:grid;gap:3px;text-align:right;white-space:nowrap}
+.hud-meta span:first-child{color:var(--accent)}
+.hud-mag{display:grid;grid-template-columns:repeat(30,1fr);gap:2px;margin-top:8px;height:6px}
+.hud-mag i{background:var(--paper);opacity:.75}
+.hud-mag i.spent{opacity:.14}
+
+/* FIRE. Bottom centre above the footer, the card's language: thin orange
+   frame, corner ticks, uppercase micro type. Leaving, the frame strokes out,
+   the label scrambles to FIRING and the button folds to a line; coming back
+   it unfolds and the frame draws in. Only clip-path, opacity, transform and
+   stroke-dashoffset animate. */
+.fire-dock{position:absolute;left:50%;bottom:calc(86px + 3.5vh);transform:translateX(-50%);display:grid;justify-items:center;gap:9px}
+.fire-button{
+  position:relative;display:flex;align-items:center;gap:11px;min-height:46px;min-width:170px;padding:0 22px;
+  color:var(--paper);background:rgba(8,10,8,.58);pointer-events:auto;
+  font-size:11px;letter-spacing:.24em;text-transform:uppercase;box-sizing:border-box;
+  border:1px solid var(--accent);transition:background .2s,color .2s,border-color .2s;
+}
+/* Resting frame = the CSS border: whole at any DPR, nothing clipped. The svg
+   rect sits exactly on it and only shows while the frame strokes out/in. */
+.fire-frame{position:absolute;inset:-1px;width:calc(100% + 2px);height:calc(100% + 2px);overflow:visible;pointer-events:none;opacity:0}
+.fire-frame rect{fill:none;stroke:var(--accent);stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:100 100;stroke-dashoffset:0}
+.fire-icon{width:17px;height:17px;color:var(--accent);stroke-width:1.4}
+.fire-label{min-width:5.6em;text-align:left;font-variant-numeric:tabular-nums}
+.fire-sub{color:var(--muted);font-size:9px;letter-spacing:.2em;padding-left:11px;border-left:1px solid rgba(236,235,227,.22)}
+.fire-button:hover,.fire-button:focus-visible{background:var(--accent);color:var(--ink)}
+.fire-button:hover .fire-icon,.fire-button:hover .fire-sub,.fire-button:focus-visible .fire-icon,.fire-button:focus-visible .fire-sub{color:var(--ink)}
+.fire-button:focus-visible{outline:2px solid var(--paper);outline-offset:6px}
+.fire-button.is-out{pointer-events:none;border-color:transparent;animation:fire-out .62s cubic-bezier(.6,0,.35,1) forwards}
+.fire-button.is-out .fire-frame{opacity:1}
+.fire-button.is-out .fire-frame rect{animation:fire-frame-out .36s ease-in forwards}
+.fire-button.is-in{animation:fire-in .5s cubic-bezier(.2,.8,.3,1),fire-border-in .75s steps(1,end)}
+.fire-button.is-in .fire-frame{animation:fire-frame-show .75s steps(1,end)}
+.fire-button.is-in .fire-frame rect{animation:fire-frame-in .62s ease-out .1s both}
+/* clip-path only while moving; the resting button has none, so no edge can be cut. */
+@keyframes fire-out{0%,42%{clip-path:inset(-4px);opacity:1;transform:none}100%{clip-path:inset(49% -4px 49% -4px);opacity:0;transform:scaleX(1.12)}}
+@keyframes fire-in{0%{clip-path:inset(49% -4px 49% -4px);opacity:0;transform:scaleX(1.12)}35%{opacity:1}99%{clip-path:inset(-4px)}100%{clip-path:none;opacity:1;transform:none}}
+@keyframes fire-border-in{0%{border-color:transparent}100%{border-color:var(--accent)}}
+@keyframes fire-frame-show{0%{opacity:1}100%{opacity:0}}
+@keyframes fire-frame-out{to{stroke-dashoffset:-100}}
+@keyframes fire-frame-in{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+.fire-hint{margin:0;font-size:9px;letter-spacing:.18em;color:var(--muted);text-shadow:0 1px 10px rgba(6,9,5,.9);transition:opacity .3s}
+.fire-hint.is-out{opacity:0}
+
+.legacy-copy{position:absolute;left:var(--pad);bottom:max(14vh,calc(10.5vh + 32px));width:max-content;max-width:calc(100vw - 2 * var(--pad))}
+.legacy-copy>span{color:var(--muted)}
+.legacy-copy p{font-size:22px;margin-top:14px}
+.closing-actions{position:absolute;right:var(--pad);bottom:11vh;display:flex;flex-direction:column;gap:16px;align-items:center}
+.primary-action{background:var(--paper);color:var(--ink);padding:17px 23px;display:flex;align-items:center;gap:44px;border-radius:2px}
+.primary-action:hover{background:var(--accent);color:var(--ink)}
+.primary-action svg{width:19px;height:19px}
+.replay{display:flex;align-items:center;gap:12px;min-height:44px;font-size:10px}
+.replay svg{width:16px}
+.credit{font-size:10px;letter-spacing:.01em;position:absolute;bottom:10.5vh;left:var(--pad);color:var(--muted);width:max-content;max-width:calc(100vw - 2 * var(--pad))}
+
+/* ---------- rail + footer ----------------------------------------------- */
+.chapter-rail{position:fixed;right:25px;top:50%;transform:translateY(-50%);z-index:20;display:flex;flex-direction:column;align-items:flex-end;transition:opacity .3s}
+.chapter-rail a{position:relative;display:flex;align-items:center;justify-content:flex-end;height:34px;min-width:34px;gap:14px}
+.chapter-rail i{height:3px;width:20px;transform:scaleX(.4);transform-origin:right;background:rgba(236,235,227,.35);transition:transform .4s,background .4s}
+.chapter-rail span{opacity:0;font-size:9px;position:absolute;right:29px;transition:opacity .2s}
+.chapter-rail .active i{transform:scaleX(1);background:var(--accent)}
+.chapter-rail a:hover span,.chapter-rail a:focus-visible span{opacity:1}
+
+.sequence-controls{position:fixed;bottom:0;left:0;right:0;z-index:20;height:86px;padding:0 var(--pad);display:flex;align-items:center;justify-content:space-between;background:linear-gradient(transparent,rgba(10,12,9,.55));font-size:10px;transition:opacity .3s}
+.step-button{display:flex;align-items:center;gap:11px;min-height:44px;font-size:10px;letter-spacing:.06em;padding:0}
+.step-button svg{width:16px;height:16px}
+.step-button[disabled]{opacity:.28;cursor:default}
+.step-button[disabled]:hover{color:inherit}
+.timeline{display:flex;align-items:center;gap:16px;color:var(--muted);font-variant-numeric:tabular-nums;position:absolute;left:50%;transform:translateX(-50%)}
+.timeline-track{width:13vw;max-width:200px;height:1px;background:rgba(236,235,227,.25);overflow:hidden}
+.timeline-track i{display:block;height:1px;background:var(--accent);width:100%;transform:scaleX(.1429);transform-origin:left;transition:transform .55s cubic-bezier(.2,.75,.3,1)}
+.timeline>span:last-child{width:102px}
+.timeline>span:first-child{white-space:nowrap}
+/* While a transition is playing the controls stay put but read as locked. */
+body.is-moving .step-button,body.is-moving .chapter-rail a{pointer-events:none}
+body.is-moving .sequence-controls,body.is-moving .chapter-rail{opacity:.45}
+
+dialog{position:fixed;margin:0 0 0 auto;inset:0;width:min(600px,100%);height:100dvh;max-height:none;max-width:none;border:0;padding:36px 50px;color:var(--paper);background:#181b15;touch-action:auto;overflow:auto}
+dialog::backdrop{background:rgba(4,6,3,.8)}
+.menu-top{display:flex;justify-content:space-between;align-items:center;color:var(--muted)}
+.menu-top button{width:44px;height:44px}
+dialog nav{display:grid;gap:12px;margin:6vh 0 30px}
+dialog nav a{font:700 clamp(35px,5vh,64px)/1.3 var(--display);display:flex;align-items:center;gap:24px}
+dialog nav a span{font:400 11px var(--body);letter-spacing:.08em;color:var(--accent)}
+dialog nav a.active{color:var(--accent)}
+dialog>p{font-size:13px;color:var(--muted)}
+.no-script{position:relative;margin:120px 24px 0}
+
+/* ---------- responsive -------------------------------------------------- */
+@media(min-width:1800px){.story-copy{max-width:480px}}
+
+@media(max-width:900px){
+  .masthead-caption{display:none}
+  .chapter-rail{right:15px}
+  .story-copy{width:28vw}
+  [data-zone=right-third] .story-copy{right:5vw}
+  [data-zone=right-third] .station-note{right:5vw;width:28vw}
+  [data-zone=left-third] .story-copy,[data-zone=left-third] .station-note,.spec-note{left:5vw;width:28vw}
+  .story-copy h2{font-size:clamp(45px,7vw,75px)}
+  .hero-title{top:24vh;font-size:min(17vw,26vh)}
+  .hero-top{bottom:19vh}
+  .hero-edition{display:none}
+  .hero-caption p{font-size:20px}
+  .hero-caption>span{font-size:9px}
+  .scroll-cue{left:auto;right:var(--pad);transform:none}
+  .detail-selector{gap:16px}
+  .timeline-track{width:12vw}
+  .timeline>span:last-child{display:none}
+  .specs{font-size:12px}
+  .spec-note{font-size:10px}
+  .legacy-copy p{font-size:18px}
+}
+
+@media(max-width:600px){
+  :root{--pad:22px}
+  .masthead{padding:17px var(--pad)}
+  .brand{font-size:20px}
+  .brand svg{width:21px;height:25px}
+  .menu-toggle{font-size:9px;gap:12px}
+  .menu-toggle svg{width:20px}
+  .hero-top{bottom:21vh;font-size:9px}
+  .hero-top>span:first-child{font-size:12px}
+  .hero-title{top:22vh;font-size:min(21vw,13vh);max-width:94vw;white-space:normal;line-height:1.02}
+  .hero-caption{bottom:10vh}
+  .hero-caption p{font-size:19px}
+  .hero-caption>span{margin-top:13px;font-size:8px}
+  /* Bottom-right corner on a phone: the bottom-left of the band is the caption. */
+  .scroll-cue{bottom:10vh;left:auto;right:var(--pad);transform:none;max-width:85px;text-align:center;font-size:8px;gap:11px}
+  .sequence-controls{height:68px;padding:0 20px}
+  .step-button{font-size:8px;gap:8px}
+  .step-button svg{width:15px}
+  .timeline{gap:8px;font-size:9px}
+  .timeline-track{width:45px}
+  .chapter-rail{right:7px}
+  .chapter-rail a{height:27px;min-width:24px}
+  .chapter-rail i{width:13px}
+  .chapter-rail span{display:none}
+  /* Portrait text zones collapse to one left-aligned column; the manifest
+     focal point keeps the subject visible beside it. */
+  /* Portrait: a cover-cropped 16:9 clip has no usable left or right third, so
+     both collapse to one left column and the manifest focal keeps the weapon
+     beside it. Documented deviation from the shotlist's landscape zones. */
+  .story-copy,[data-zone=right-third] .story-copy,[data-zone=left-third] .story-copy{top:15vh;left:var(--pad);right:auto;width:calc(100% - 60px);max-width:390px}
+  .station-note,[data-zone=right-third] .station-note,[data-zone=left-third] .station-note{left:var(--pad);right:auto;width:auto;max-width:none}
+  .story-copy h2{font-size:53px;line-height:1}
+  .story-copy p{font-size:14px;line-height:1.5;margin-top:19px;max-width:32ch}
+  #origin .story-copy p+p{max-width:31ch;font-size:13px;margin-top:12px}
+  .text-link{font-size:11px;margin-top:17px}
+  .station-note{bottom:11vh;font-size:9px}
+  .artwork-copy{top:15vh}
+  .artwork-copy h2{font-size:43px;max-width:80%;line-height:1.06}
+  .artwork-copy p{max-width:32ch;font-size:13px}
+  .detail-selector{margin-top:14px;gap:25px}
+  .detail-selector button{font-size:12px}
+  #specification .story-copy{top:14vh;width:calc(100% - 70px)}
+  #specification h2{font-size:49px}
+  #specification .story-copy p{margin-top:17px;font-size:13px}
+  .specs{max-width:290px;margin-top:18px;font-size:12px}
+  .specs>div{padding:7px 0}
+  .spec-note{display:none}
+  /* Clears the CHAPTERS button, then still fits inside the upper quarter. */
+  .signature-heading{top:11vh;text-align:left;right:44px}
+  .signature-heading h2{font-size:min(11.5vw,7vh);line-height:1.06}
+  .signature-heading p{font-size:11px;margin:10px 0 0;max-width:34ch}
+  /* 390px leaves 108px inside the left third once the page padding is off. */
+  .sticker-dock{bottom:10vh;left:var(--pad);right:auto;transform:none;text-align:left;width:min(28vw,108px)}
+  .sticker-stage{justify-items:center;gap:6px}
+  .sticker-slot,.sticker-slot::before{width:72px;height:72px}
+  .sticker-slot img{width:52px;height:52px}
+  .sticker-options{gap:8px 10px}
+  .sticker-options button{width:auto;font-size:8px;gap:4px;padding:2px 0 7px;white-space:normal;line-height:1.25}
+  .sticker-options img,.sticker-options svg{width:34px;height:34px}
+  .sticker-options svg{width:26px;height:34px}
+  .sticker-caption{font-size:8px;letter-spacing:0;margin-top:9px;line-height:1.35}
+  [data-zone=top-right] .station-inner{padding:7.5vh var(--pad) 0 0;gap:10px}
+  [data-zone=top-right] .signature-heading,
+  [data-zone=top-right] .sticker-dock{width:min(44vw,172px)}
+  [data-zone=top-right] .signature-heading h2{font-size:min(6.8vw,3.4vh);line-height:1.06}
+  [data-zone=top-right] .signature-heading p{font-size:9px;margin-top:7px;line-height:1.4}
+  [data-zone=top-right] .sticker-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}
+  [data-zone=top-right] .sticker-options button{width:auto;font-size:8px;white-space:normal;line-height:1.25;gap:4px;padding:2px 0 6px}
+  [data-zone=top-right] .sticker-options img,[data-zone=top-right] .sticker-options svg{width:32px;height:32px}
+  [data-zone=top-right] .sticker-options svg{width:24px;height:32px}
+  [data-zone=top-right] .sticker-caption{font-size:8px;margin-top:8px;line-height:1.35;white-space:normal}
+  /* Sits above the stacked actions (10vh + ~84px), whatever the phone height. */
+  .legacy-copy{bottom:calc(10vh + 108px)}
+  .legacy-copy>span{font-size:9px}
+  .legacy-copy p{font-size:18px;margin-top:12px}
+  .closing-actions{bottom:10vh;left:var(--pad);right:auto;gap:4px;align-items:flex-start}
+  .primary-action{padding:12px 17px;font-size:10px;gap:36px}
+  .replay{font-size:8px;min-height:40px}
+  /* Legacy also owns the upper quarter, and the bottom corners are full on a
+     phone, so the small print goes up there instead of fighting the actions. */
+  .credit{font-size:8px;top:11vh;bottom:auto;line-height:1.4;left:auto;right:var(--pad);text-align:right;max-width:180px;text-shadow:0 0 6px rgba(0,0,0,.9),0 1px 2px rgba(0,0,0,.9)}
+  .stage-edge{box-shadow:inset 0 0 65px rgba(0,0,0,.25)}
+  /* Legacy (L6 temple) on a phone: the 16:9 frame fits the full height, so the
+     lit chest (58-85 % down) sits right behind the copy and the actions. A
+     bottom scrim, faded in with the station, keeps them readable and stops
+     above the rifle's magazine (~60 %). */
+  .stage-shade::after{content:'';position:absolute;inset:0;opacity:0;transition:opacity 1.2s ease;
+    background:linear-gradient(180deg,transparent 58%,rgba(8,10,8,.62) 70%,rgba(8,10,8,.82) 86%,rgba(8,10,8,.9))}
+  body[data-station=legacy] .stage-shade::after{opacity:1}
+  dialog{padding:25px}
+  dialog nav{margin-top:4vh;gap:8px}
+  dialog nav a{font-size:44px}
+  /* Recoil on a phone: heading and one line up top, above the target; the
+     card shrinks to plot + ammo and parks bottom-left, over the forearm and
+     clear of the receiver; specs and the note step aside. */
+  /* Five targets: on a phone TGT 02 (the lock) stands at the left edge from
+     ~23% height down, so the copy ends above it: one-line heading, short lines. */
+  [data-zone=recoil] .recoil-copy{top:10vh;left:var(--pad);width:calc(100% - 70px);max-width:330px}
+  #recoil .recoil-copy h2{font-size:34px;line-height:1}
+  #recoil .recoil-copy h2 br{display:none}
+  [data-zone=recoil] .recoil-copy p{font-size:11px;line-height:1.4;margin-top:8px;max-width:none}
+  .recoil-specs,[data-zone=recoil] .station-note{display:none}
+  .hud-card{top:auto;bottom:calc(68px + 2.5vh);left:var(--pad);right:auto;width:138px;min-width:0;padding:8px 8px 7px;background:rgba(6,9,5,.58)}
+  .hud-head{padding-bottom:5px}
+  .hud-head span:last-child,.hud-meta span:last-child{display:none}
+  .hud-plot-wrap{margin-top:6px;gap:6px}
+  .hud-pull{column-gap:4px;grid-template-columns:auto 3px}
+  .hud-pull-trace{display:none}
+  .hud-pull-label{font-size:7px;letter-spacing:.12em}
+  .fire-dock{left:auto;right:var(--pad);transform:none;bottom:calc(68px + 2.5vh);justify-items:end;gap:6px}
+  .fire-button{min-width:0;min-height:46px;padding:0 18px 0 15px;gap:9px}
+  .hud-dmg{font-size:12px}
+  .fire-sub{display:none}
+  .fire-hint{font-size:8px;letter-spacing:.12em}
+  .hud-read{margin-top:6px;padding-top:5px}
+  .hud-ammo b{font-size:24px}
+  .hud-read{flex-direction:column;align-items:flex-start;gap:4px}
+  .hud-meta{font-size:8px;letter-spacing:.08em;text-align:left}
+  .hud-mag{margin-top:6px;height:4px;gap:1px}
+  /* On a phone the copy sits just above the targets: tags go under their brackets, right-aligned clear of the front sight. */
+  .hud-tag{font-size:8px;bottom:auto;top:calc(var(--rs) / 2 + 6px);left:auto;right:calc(var(--rs) / -2);justify-items:end;text-align:right}
+  [data-zone=recoil] .station-inner::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(180deg,rgba(6,9,5,.62) 0,rgba(6,9,5,.35) 22%,rgba(6,9,5,0) 32%);
+  }
+  /* Portrait puts the copy column straight over the middle of the frame, where
+     the weapon is. A plain two-ended gradient keeps it readable whatever the
+     plate shows. No backdrop-filter: it costs FPS for no gain over this. */
+  [data-zone=right-third] .station-inner::before,
+  [data-zone=left-third] .station-inner::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:
+      linear-gradient(180deg,rgba(6,9,5,.78) 0,rgba(6,9,5,.66) 34%,rgba(6,9,5,.28) 52%,rgba(6,9,5,0) 64%),
+      linear-gradient(0deg,rgba(6,9,5,.6) 0,rgba(6,9,5,0) 22%);
+  }
+}
+
+@media(max-height:820px) and (min-width:601px){
+  .recoil-specs{display:none}
+}
+
+@media(max-height:650px) and (min-width:601px){
+  .story-copy{top:18vh}
+  .story-copy h2{font-size:55px}
+  .story-copy p{font-size:13px;margin-top:15px}
+  .specs{font-size:12px;margin-top:12px}
+  .specs>div{padding:6px 0}
+  .hero-caption{bottom:13vh}
+  .hero-title{top:21vh;font-size:min(15.9vw,26vh)}
+  .signature-heading{top:7vh}
+  .signature-heading h2{font-size:min(5.4vw,8vh)}
+  .sticker-dock{bottom:12vh;width:min(22vw,180px)}
+  .sticker-slot,.sticker-slot::before{width:64px;height:64px}
+  .sticker-slot img{width:46px;height:46px}
+  .sticker-options img{width:38px;height:38px}
+  .sequence-controls{height:62px}
+  .artwork-copy p{font-size:13px}
+  .detail-selector{margin-top:10px}
+  .credit{bottom:12vh}
+  .masthead{padding-top:12px}
+  #recoil .recoil-copy h2{font-size:44px}
+  .recoil-specs>div{padding:5px 0}
+  .hud-card{bottom:calc(62px + 2vh);width:min(17vw,40vh,270px);min-width:170px}
+}
+
+/* Reduced motion: no transitions play. Stations hard-cut with a 300 ms
+   crossfade and the loops hold on their first frame, which is the poster. */
+@media(prefers-reduced-motion:reduce){
+  :root{--in:.2s;--out:.15s}
+  .scroll-cue svg{animation:none}
+  .timeline-track i{transition:none}
+  .station{transition:opacity var(--out) linear,visibility 0s linear var(--out);transform:none}
+  .station.is-active{transition:opacity var(--in) linear,visibility 0s}
+  .copy-line,.station.is-active .copy-line{translate:none;filter:none;opacity:1;transition:none}
+  .sticker-options button:hover{transform:none}
+  .hud{transition:none}
+  .plot-snake,.plot-pulse{display:none}
+  .fire-button.is-out,.fire-button.is-in,.fire-button.is-out .fire-frame rect,.fire-button.is-in .fire-frame rect,.fire-button.is-in .fire-frame{animation:none}
+  .fire-button.is-out .fire-frame{opacity:0}
+  .fire-button.is-out{opacity:0}
+  .fire-button.is-out::before,.fire-button.is-out::after{transition:none}
+  .fire-hint{transition:none}
+}
+
+/* ---------- the hero's entrance ------------------------------------------
+   Station 1 is the payoff of the door. js/preloader.js fires `preloader:done`
+   once the overlay is off the screen; js/sequence.js then splits the title
+   into words and runs one GSAP timeline (js/vendor/gsap.min.js): each line is
+   revealed in place — clipped at its own baseline with the words rising into
+   view from behind that line — and the gold sweep passes over the letters just
+   after they land. GSAP writes inline styles and this file only holds the
+   resting shapes, the two custom properties the timeline drives, and the
+   reduced-motion (or no-GSAP) fallback, which is a plain fade.
+   The split is unwrapped and the class dropped at the end: station 1's resting
+   state, layout and text are exactly what they were before the intro. */
+.station.is-intro{--intro-ease:cubic-bezier(.16,.84,.32,1);--intro-lead:.22s;--wash:0}
+.station.is-intro .copy-line{transition:none}
+/* Each word (and each caption line) sits in a mask whose clip line is fixed
+   just under the letters; the word inside it is what rises. The mask is never
+   transformed, so the line stays put, and clip-path costs no layout, so the
+   split changes nothing about the text's metrics. */
+.hero-mask{display:inline-block;white-space:inherit;clip-path:inset(-50% -10% 13% -10%)}
+.hero-line .hero-mask{display:block;clip-path:inset(-60% -6% 0 -6%)}
+.hero-word,.hero-rise{display:inline-block;white-space:inherit}
+/* the light the door left on the hero, fading as the title lands */
+.station.is-intro .station-inner::before{
+  content:'';position:absolute;left:50%;top:0;width:min(150vh,120vw);height:78vh;
+  translate:-50% 0;pointer-events:none;opacity:var(--wash,0);
+  background:radial-gradient(ellipse 52% 46% at 50% 34%,rgba(255,196,110,.20),rgba(255,150,60,.07) 45%,rgba(255,150,60,0) 72%);
+}
+/* A slow warm glint over the letterforms: the same glyphs, filled with a wide,
+   feathered highlight that the timeline walks across them (--sweep). Peak alpha
+   stays low and the tint is amber, so the accent orange reads through it the
+   whole way — a highlight travelling over the type, never a white band. */
+.station.is-intro .hero-title{--sweep:0}
+.station.is-intro .hero-title::after{
+  content:attr(data-text);
+  content:attr(data-text) / '';        /* same glyphs, no second reading for AT */
+  position:absolute;inset:0;pointer-events:none;
+  font:inherit;letter-spacing:inherit;text-align:inherit;white-space:inherit;
+  background:linear-gradient(98deg,
+    rgba(255,206,142,0) 24%,
+    rgba(255,212,152,.08) 32%,
+    rgba(255,221,168,.21) 40%,
+    rgba(255,232,188,.37) 47%,
+    rgba(255,238,202,.44) 50%,
+    rgba(255,232,188,.37) 53%,
+    rgba(255,221,168,.21) 60%,
+    rgba(255,212,152,.08) 68%,
+    rgba(255,206,142,0) 76%);
+  background-size:300% 100%;background-repeat:no-repeat;
+  background-position:calc((1 - var(--sweep,0)) * 100%) 0;
+  -webkit-background-clip:text;background-clip:text;
+  color:transparent;-webkit-text-fill-color:transparent;text-shadow:none;
+}
+/* the markers and the cue rise on `translate`, never `transform`: the cue and
+   the title centre themselves with a transform and must keep it */
+.station.is-intro .hero-top,.station.is-intro .hero-caption>span,
+.station.is-intro .hero-edition,.station.is-intro .scroll-cue{translate:0 var(--rise,0px)}
+
+/* ---- no GSAP, or the visitor asked for less motion: a plain fade --------- */
+.station.is-intro.is-plain .hero-title,.station.is-intro.is-plain .hero-line,
+.station.is-intro.is-plain .hero-caption>span,.station.is-intro.is-plain .hero-top,
+.station.is-intro.is-plain .hero-edition,.station.is-intro.is-plain .scroll-cue{
+  animation:heroPlain .45s linear var(--intro-lead) both;translate:none
+}
+.station.is-intro.is-plain .station-inner::before,
+.station.is-intro.is-plain .hero-title::after{display:none}
+.station.is-intro.is-plain .hero-line:nth-child(2){animation-delay:calc(var(--intro-lead) + .1s)}
+.station.is-intro.is-plain .hero-caption>span{animation-delay:calc(var(--intro-lead) + .16s)}
+.station.is-intro.is-plain .hero-top{animation-delay:calc(var(--intro-lead) + .2s)}
+.station.is-intro.is-plain .hero-edition{animation-delay:calc(var(--intro-lead) + .24s)}
+.station.is-intro.is-plain .scroll-cue{animation-delay:calc(var(--intro-lead) + .3s)}
+@keyframes heroPlain{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .station.is-intro .scroll-cue svg{animation:none}
+}
